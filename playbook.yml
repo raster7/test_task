@@ -1,0 +1,270 @@
+---
+- name:
+  hosts: servers
+  become: yes
+  become_method: sudo
+  become_user: root
+  vars:
+    ansible_become_pass: "1111"
+
+  tasks:
+#    - name: Установить таймзону UTC+0
+#      command: timedatectl set-timezone UTC
+
+    - name: Удалить дефолтного пользователя debian
+      user:
+        name: debian
+        state: absent
+        remove: yes
+
+    - name: Обновить кеш пакетов
+      apt:
+        update_cache: yes
+
+    - name: Установить пакеты
+      apt:
+        name:
+          - libfreetype6
+          - libfreetype6-dev
+          - zlib1g
+          - zlib1g-dev
+          - libxml2
+          - libxml2-dev
+          - libxslt1-dev
+          - libxslt1.1
+          - gcc
+          - curl
+          - make
+          - libcurl4-openssl-dev
+          - libssl-dev
+          - mc
+          - wget
+          - aptitude
+          - unzip
+          - htop
+          - nload
+          - libffi-dev
+          - libmariadb-dev
+          - gnupg2
+          - pkg-config
+          - tcl
+          - git
+          - sendmail
+          - openssl
+          - python3-minimal
+          - python3-setuptools
+          - screen
+          - ethtool
+          - openssl
+          - nodejs
+          - npm
+        state: present
+
+    - name: Установить Nginx
+      apt:
+        name: nginx
+        state: present
+
+#    - name: Скачать MySQL 5.7
+#      get_url:
+#        url: https://dev.mysql.com/get/mysql-apt-config_0.8.22-1_all.deb
+#        dest: /tmp/mysql-apt-config.deb
+
+    - name: Скачать MySQL 5.7
+      shell: "wget https://dev.mysql.com/get/mysql-apt-config_0.8.22-1_all.deb"
+
+    - name: Установить MySQL APT репозиторий
+      apt:
+        deb: "mysql-apt-config_0.8.22-1_all.deb"
+        state: present
+
+    - name: Установить MySQL 5.7
+      debconf:
+        name: mysql-server
+        question: mysql-server/root_password
+        value: "12345678"
+        vtype: password
+
+    - name: Установить MySQL 5.7 (повторно для подтверждения пароля)
+      debconf:
+        name: mysql-server
+        question: mysql-server/root_password_again
+        value: "12345678"
+        vtype: password
+
+    - name: Установить MySQL сервер
+      apt:
+        name: mysql-server
+        state: present
+
+    - name: Скачать исходники Python 3.9.6
+      get_url:
+        url: https://www.python.org/ftp/python/3.9.6/Python-3.9.6.tgz
+        dest: /home/developer/Python-3.9.6.tgz
+
+    - name: Распаковать Python 3.9.6
+      command: tar -xzf Python-3.9.6.tgz
+      args:
+        chdir: /home/developer
+        creates: /home/developer/Python-3.9.6
+
+    - name: Собрать и установить Python 3.9.6
+      shell: |
+        ./configure --prefix=/opt/python3
+        make -j$(nproc)
+        make install
+      args:
+        chdir: /home/developer/Python-3.9.6
+        creates: /opt/python3/bin/python3.9
+
+    - name: Обновить pip
+      command: /opt/python3/bin/pip3.9 install --upgrade pip
+
+    - name: Установить пакеты через pip
+      command: /opt/python3/bin/pip3.9 install pycurl mysqlclient mysql.connector certifi redis sentry-sdk
+
+    - name: Скачать установочный скрипт Composer
+      get_url:
+        url: https://getcomposer.org/installer
+        dest: /tmp/composer-setup.php
+        mode: '0644'
+
+    - name: Установить Composer
+      command:
+        cmd: php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer
+        creates: /usr/local/bin/composer
+
+    - name: Проверить версию Composer
+      command: composer --version
+      register: composer_version
+      changed_when: false
+
+    - name: Вывести установленную версию Composer
+      debug:
+        msg: "Установлена версия: {{ composer_version.stdout }}"
+
+    - name: Установить параметры ядра
+      lineinfile:
+        path: /etc/sysctl.conf
+        line: "{{ item }}"
+        create: yes
+      with_items:
+        - 'net.ipv4.ip_local_port_range="1024 65535"'
+        - 'fs.nr_open=2000000'
+        - 'fs.file-max=5000000'
+
+    - name: Применить изменения в sysctl
+      command: sysctl -p
+
+    - name: Изменить лимиты пользователей в /etc/security/limits.conf
+      blockinfile:
+        path: /etc/security/limits.conf
+        block: |
+          root hard nofile 6500536
+          root soft nofile 6500535
+          * soft nofile 40000000
+          * hard nofile 40000000
+
+    - name: Изменить лимиты systemd в /etc/systemd/system.conf
+      lineinfile:
+        path: /etc/systemd/system.conf
+        line: "DefaultLimitNOFILE=6500535"
+
+    - name: Добавить пользователя deploy
+      user:
+        name: deploy
+        state: present
+        create_home: yes
+
+    - name: Создать директорию .ssh для пользователя deploy
+      file:
+        path: /home/deploy/.ssh
+        state: directory
+        mode: '0700'
+        owner: deploy
+        group: deploy
+
+    - name: Добавить пустые файлы id_rsa и id_rsa.pub
+      copy:
+        content: ""
+        dest: "/home/deploy/.ssh/{{ item }}"
+        mode: '0600'
+        owner: deploy
+        group: deploy
+      with_items:
+        - id_rsa
+        - id_rsa.pub
+
+    - name: Добавить публичный ключ в authorized_keys
+      copy:
+        content: "{{ lookup('file', '/path/to/your/id_rsa.pub') }}"
+        dest: /home/deploy/.ssh/authorized_keys
+        mode: '0644'
+        owner: deploy
+        group: deploy
+
+    - name: Построить структуру каталогов для Nginx
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: deploy
+        group: deploy
+        mode: '0755'
+      with_items:
+        - /etc/nginx/projects_conf
+        - /etc/nginx/projects
+        - /etc/nginx/projects/panels
+        - /var/www/server/frontend/shared/runtime/GeoIP
+
+    - name: Установить права доступа для директории /etc/nginx/projects
+      file:
+        path: /etc/nginx/projects
+        state: directory
+        owner: deploy
+        group: deploy
+        mode: '0777'
+
+    - name: Копировать файл nginx.conf на сервер
+      copy:
+        src: nginx.conf
+        dest: /etc/nginx/nginx.conf
+        owner: root
+        group: root
+        mode: '0644'
+      notify:
+        - Перезагрузить nginx
+
+    - name: Установить logrotate, если он не установлен
+      apt:
+        name: logrotate
+        state: present
+
+    - name: Создать файл конфигурации для logrotate для Nginx
+      copy:
+        dest: /etc/logrotate.d/nginx
+        content: |
+          /var/log/nginx/*.log {
+              daily                          # Логи ротируются ежедневно
+              missingok                      # Не выдавать ошибку, если файла нет
+              rotate 30                      # Хранить 30 последних логов (1 месяц)
+              compress                       # Сжимать старые логи
+              delaycompress                  # Сжимать логи только после ротации следующего дня
+              notifempty                     # Не ротировать пустые файлы
+              create 0644 root root          # Создавать новые логи с правами 0644 для пользователя root
+              postrotate
+                  # Перезагрузка nginx после ротации логов
+                  if [ -f /var/run/nginx.pid ]; then
+                      kill -USR1 `cat /var/run/nginx.pid`
+                  fi
+              endscript
+          }
+
+    - name: Применить настройки logrotate для Nginx
+      command: logrotate -f /etc/logrotate.d/nginx
+
+  handlers:
+    - name: Перезагрузить nginx
+      service:
+        name: nginx
+        state: restarted
+
