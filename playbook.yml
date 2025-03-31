@@ -4,8 +4,6 @@
   become: yes
   become_method: sudo
   become_user: root
-  vars:
-    mysql_apt_deb: "mysql-apt-config_0.8.22-1_all.deb"
   vars_files:
     - vault.yml
 

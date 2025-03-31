@@ -1,2 +1,3 @@
 ---
 mysql_root_password: "12345678"
+mysql_apt_deb: "mysql-apt-config_0.8.22-1_all.deb"
