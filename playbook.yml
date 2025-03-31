@@ -4,12 +4,12 @@
   become: yes
   become_method: sudo
   become_user: root
-  vars:
-    ansible_become_pass: "1111"
+  vars_files:
+    - vault.yml
 
   tasks:
-#    - name: Установить таймзону UTC+0
-#      command: timedatectl set-timezone UTC
+    - name: Установить таймзону UTC+0
+      command: timedatectl set-timezone UTC
 
     - name: Удалить дефолтного пользователя debian
       user:
@@ -58,6 +58,7 @@
           - openssl
           - nodejs
           - npm
+          - php-cli
         state: present
 
     - name: Установить Nginx
@@ -65,31 +66,26 @@
         name: nginx
         state: present
 
-#    - name: Скачать MySQL 5.7
-#      get_url:
-#        url: https://dev.mysql.com/get/mysql-apt-config_0.8.22-1_all.deb
-#        dest: /tmp/mysql-apt-config.deb
-
     - name: Скачать MySQL 5.7
-      shell: "wget https://dev.mysql.com/get/mysql-apt-config_0.8.22-1_all.deb"
+      shell: "wget https://dev.mysql.com/get/{{ mysql_apt_deb }}"
 
     - name: Установить MySQL APT репозиторий
       apt:
-        deb: "mysql-apt-config_0.8.22-1_all.deb"
+        deb: "{{ mysql_apt_deb }}"
         state: present
 
     - name: Установить MySQL 5.7
       debconf:
         name: mysql-server
         question: mysql-server/root_password
-        value: "12345678"
+        value: "{{ mysql_root_password }}"
         vtype: password
 
     - name: Установить MySQL 5.7 (повторно для подтверждения пароля)
       debconf:
         name: mysql-server
         question: mysql-server/root_password_again
-        value: "12345678"
+        value: "{{ mysql_root_password }}"
         vtype: password
 
     - name: Установить MySQL сервер
@@ -134,15 +130,6 @@
         cmd: php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer
         creates: /usr/local/bin/composer
 
-    - name: Проверить версию Composer
-      command: composer --version
-      register: composer_version
-      changed_when: false
-
-    - name: Вывести установленную версию Composer
-      debug:
-        msg: "Установлена версия: {{ composer_version.stdout }}"
-
     - name: Установить параметры ядра
       lineinfile:
         path: /etc/sysctl.conf
@@ -184,9 +171,9 @@
         owner: deploy
         group: deploy
 
-    - name: Добавить пустые файлы id_rsa и id_rsa.pub
+    - name: Скопировать приватный и публичный ключи
       copy:
-        content: ""
+        src: "~/.ssh/{{ item }}"
         dest: "/home/deploy/.ssh/{{ item }}"
         mode: '0600'
         owner: deploy
@@ -195,13 +182,17 @@
         - id_rsa
         - id_rsa.pub
 
-    - name: Добавить публичный ключ в authorized_keys
-      copy:
-        content: "{{ lookup('file', '/path/to/your/id_rsa.pub') }}"
-        dest: /home/deploy/.ssh/authorized_keys
-        mode: '0644'
-        owner: deploy
-        group: deploy
+    - name: Считать публичный ключ с целевой машины
+      slurp:
+        src: /home/deploy/.ssh/id_rsa.pub
+      register: slurped_key
+
+    - name: Добавить публичный ключ в authorized_keys, если его нет
+      authorized_key:
+        user: deploy
+        state: present
+        key: "{{ slurped_key.content | b64decode }}"
+        path: "/home/deploy/.ssh/authorized_keys"
 
     - name: Построить структуру каталогов для Nginx
       file:
@@ -244,15 +235,14 @@
         dest: /etc/logrotate.d/nginx
         content: |
           /var/log/nginx/*.log {
-              daily                          # Логи ротируются ежедневно
-              missingok                      # Не выдавать ошибку, если файла нет
-              rotate 30                      # Хранить 30 последних логов (1 месяц)
-              compress                       # Сжимать старые логи
-              delaycompress                  # Сжимать логи только после ротации следующего дня
-              notifempty                     # Не ротировать пустые файлы
-              create 0644 root root          # Создавать новые логи с правами 0644 для пользователя root
+              daily
+              missingok
+              rotate 30
+              compress
+              delaycompress
+              notifempty
+              create 0644 root root
               postrotate
-                  # Перезагрузка nginx после ротации логов
                   if [ -f /var/run/nginx.pid ]; then
                       kill -USR1 `cat /var/run/nginx.pid`
                   fi
@@ -267,4 +257,3 @@
       service:
         name: nginx
         state: restarted
-
